@@ -7126,7 +7126,7 @@ SDL_LoadWAV_RW(SDL12_RWops *rwops12, int freerwops12,
     SDL_AudioSpec *retval = SDL20_LoadWAV_RW(rwops20, freerwops12, spec, buf, len);
     if (retval && retval->format & 0x20) {
         SDL20_SetError("Unsupported 32-bit PCM data format");
-        SDL20_FreeRW(*buf);
+        SDL20_FreeWAV(*buf);
         *buf = NULL;
         retval = NULL;
     }
