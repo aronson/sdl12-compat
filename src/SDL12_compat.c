@@ -7117,18 +7117,31 @@ DECLSPEC SDL_AudioSpec * SDLCALL
 SDL_LoadWAV_RW(SDL12_RWops *rwops12, int freerwops12,
                SDL_AudioSpec *spec, Uint8 **buf, Uint32 *len)
 {
+    typedef void (*free_t)(void *);
+    free_t msvcrt_free = (free_t)(GetProcAddress(GetModuleHandle(TEXT("msvcrt")), "free"));
+
     SDL_RWops *rwops20 = RWops12to20(rwops12);
     SDL_AudioSpec *retval = SDL20_LoadWAV_RW(rwops20, freerwops12, spec, buf, len);
     if (retval && retval->format & 0x20) {
         SDL20_SetError("Unsupported 32-bit PCM data format");
-        SDL20_FreeWAV(*buf);
+        SDL20_FreeRW(*buf)
         *buf = NULL;
         retval = NULL;
     }
     if (!freerwops12) {  /* free our wrapper if SDL2 didn't close it. */
-        SDL20_FreeRW(rwops20);
+        SDL20_FreeRW(rwops20)
     }
     return retval;
+}
+
+DECLSPEC void SDLCALL
+SDL_FreeWAV (Uint8 *audio_buf)
+{
+    if ( audio_buf != NULL ) {
+        typedef void (*free_t)(void *);
+	    free_t msvcrt_free = (free_t)(GetProcAddress(GetModuleHandle(TEXT("msvcrt")), "free"));
+	    msvcrt_free(audio_buf);
+    }
 }
 
 
