@@ -29,7 +29,7 @@
  *  should be way ahead of what SDL-1.2 Classic would report, so apps can
  *  decide if they're running under the compat layer, if they really care.
  */
-#define SDL12_COMPAT_VERSION 50
+#define SDL12_COMPAT_VERSION 53
 
 #include <stdarg.h>
 #include <limits.h>
@@ -59,6 +59,23 @@
 #undef vsnprintf
 
 #define SDL_BlitSurface SDL_UpperBlit
+
+#ifdef __linux__
+#include <unistd.h> /* for readlink() */
+#endif
+
+#if defined(__unix__) || defined(__APPLE__)
+#ifndef PATH_MAX
+#define PATH_MAX 1024
+#endif
+#define SDL12_MAXPATH PATH_MAX
+#elif defined _WIN32
+#define SDL12_MAXPATH MAX_PATH
+#elif defined __OS2__
+#define SDL12_MAXPATH CCHMAXPATH
+#else
+#define SDL12_MAXPATH 1024
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -936,6 +953,7 @@ static SDL_bool TranslateKeyboardLayout = SDL_FALSE;
 #endif
 static int VideoDisplayIndex = 0;
 static SDL_bool SupportSysWM = SDL_FALSE;
+static SDL_bool EventThreadEnabled = SDL_FALSE;
 static SDL_bool CDRomInit = SDL_FALSE;
 static char *CDRomPath = NULL;
 static SDL12_CD *CDRomDevice = NULL;
@@ -965,6 +983,7 @@ static GLuint OpenGLLogicalScalingMultisampleColor = 0;
 static GLuint OpenGLLogicalScalingMultisampleDepth = 0;
 static GLuint OpenGLCurrentReadFBO = 0;
 static GLuint OpenGLCurrentDrawFBO = 0;
+static SDL_bool ForceGLSwapBufferContext = SDL_FALSE;
 
 /* !!! FIXME: need a mutex for the event queue. */
 #define SDL12_MAXEVENTS 128
@@ -1126,6 +1145,147 @@ UnloadSDL20(void)
     CloseSDL20Library();
 }
 
+typedef struct QuirkEntryType
+{
+    const char *exe_name;
+    const char *hint_name;
+    const char *hint_value;
+} QuirkEntryType;
+
+static QuirkEntryType quirks[] = {
+#if defined(__unix__)
+    /* Awesomenauts uses Cg, and does weird things with the GL context. */
+    {"Awesomenauts.bin.x86", "SDL12COMPAT_OPENGL_SCALING", "0"},
+    {"Awesomenauts.bin.x86", "SDL_VIDEODRIVER", "x11"},
+    {"Awesomenauts.bin.x86", "SDL12COMPAT_FORCE_GL_SWAPBUFFER_CONTEXT", "1"},
+
+    /* Braid uses Cg, which uses glXGetProcAddress(). */
+    {"braid", "SDL_VIDEODRIVER", "x11"},
+    {"braid", "SDL12COMPAT_OPENGL_SCALING", "0"},
+
+    /* GOG's DOSBox builds have architecture-specific filenames. */
+    {"dosbox", "SDL12COMPAT_USE_KEYBOARD_LAYOUT", "0"},
+    {"dosbox_i686", "SDL12COMPAT_USE_KEYBOARD_LAYOUT", "0"},
+    {"dosbox_x86_64", "SDL12COMPAT_USE_KEYBOARD_LAYOUT", "0"},
+
+    /* The 32-bit Steam build only of Multiwinia Quits but doesn't re-Init */
+    {"multiwinia.bin.x86", "SDL12COMPAT_NO_QUIT_VIDEO", "1"}
+#else
+    /* TODO: Add any quirks needed for this system. */
+
+    /* A dummy entry to keep compilers happy. */
+    {"", "", "0"}
+#endif
+};
+
+#ifdef __linux__
+static void OS_GetExeName(char *buf, const unsigned maxpath) {
+    buf[0] = '\0';
+    readlink("/proc/self/exe", buf, maxpath);
+}
+#elif defined(_WIN32)
+static void OS_GetExeName(char *buf, const unsigned maxpath) {
+    buf[0] = '\0';
+    GetModuleFileNameA(NULL, buf, maxpath);
+}
+#elif defined(__OS2__)
+static void OS_GetExeName(char *buf, const unsigned maxpath) {
+    PPIB pib;
+    DosGetInfoBlocks(NULL, &pib);
+    buf[0] = '\0';
+    DosQueryModuleName(pib->pib_hmte, maxpath, buf);
+}
+#else /* FIXME */
+static void OS_GetExeName(char *buf, const unsigned maxpath) {
+    buf[0] = '\0';
+    (void)maxpath;
+}
+#endif
+
+static const char *
+SDL12Compat_GetExeName(void)
+{
+    static const char *exename = NULL;
+    if (exename == NULL) {
+        static char path_buf[SDL12_MAXPATH];
+        static char *base_path;
+        OS_GetExeName(path_buf, SDL12_MAXPATH);
+        base_path = SDL20_strrchr(path_buf, *DIRSEP);
+        if (base_path) {
+            /* We have a '\\' component. */
+            exename = base_path + 1;
+        } else {
+            /* No slashes, return the whole module filanem. */
+            exename = path_buf;
+        }
+    }
+    return exename;
+}
+
+static const char *
+SDL12Compat_GetHint(const char *name)
+{
+    const char *value;
+    const char *exe_name;
+    int i;
+
+    /* First, check if there's an environment variable override. */
+    value = SDL20_getenv(name);
+    if (value) {
+        return value;
+    }
+
+    /* Else, look up the quirks table. */
+    exe_name = SDL12Compat_GetExeName();
+    if (*exe_name == '\0') {
+        return NULL;
+    }
+
+    for (i = 0; i < SDL_arraysize(quirks); i++) {
+        if (!SDL20_strcmp(exe_name, quirks[i].exe_name)) {
+            if (!SDL20_strcmp(name, quirks[i].hint_name)) {
+                return quirks[i].hint_value;
+            }
+        }
+    }
+
+    /* No value was found, NULL by default. */
+    return NULL;
+}
+
+static SDL_bool
+SDL12Compat_GetHintBoolean(const char *name, SDL_bool default_value)
+{
+    const char *val = SDL12Compat_GetHint(name);
+
+    if (!val) {
+        return default_value;
+    }
+
+    return (SDL20_atoi(val) != 0) ? SDL_TRUE : SDL_FALSE;
+}
+
+static void
+SDL12Compat_PrintQuirks(void)
+{
+    int i;
+    const char *exe_name = SDL12Compat_GetExeName();
+
+    if (*exe_name == '\0') {
+        return;
+    }
+    for (i = 0; i < SDL_arraysize(quirks); i++) {
+        if (!SDL20_strcmp(exe_name, quirks[i].exe_name)) {
+            if (!SDL20_getenv(quirks[i].hint_name)) {
+                SDL20_Log("Applying compatibility quirk %s=\"%s\" for \"%s\"", quirks[i].hint_name, quirks[i].hint_value, exe_name);
+            } else {
+                SDL20_Log("Not applying compatibility quirk %s=\"%s\" for \"%s\" due to environment variable override (\"%s\")\n",
+                          quirks[i].hint_name, quirks[i].hint_value, exe_name, SDL20_getenv(quirks[i].hint_name));
+            }
+        }
+    }
+}
+
 static int
 LoadSDL20(void)
 {
@@ -1145,8 +1305,7 @@ LoadSDL20(void)
                 if (!okay) {
                     sprintf_fn(loaderror, "SDL2 %d.%d.%d library is too old.", v.major, v.minor, v.patch);
                 } else {
-                    const char *envr = SDL20_getenv("SDL12COMPAT_DEBUG_LOGGING");
-                    const SDL_bool debug_logging = (!envr || (SDL20_atoi(envr) == 0)) ? SDL_FALSE : SDL_TRUE;
+                    const SDL_bool debug_logging = SDL12Compat_GetHintBoolean("SDL12COMPAT_DEBUG_LOGGING", SDL_FALSE);
                     #if ENABLE_FIXMES == 1
                     PrintFixmes = debug_logging;
                     #endif
@@ -1156,6 +1315,8 @@ LoadSDL20(void)
                         #else
                         SDL20_Log("sdl12-compat, talking to SDL2 %d.%d.%d", v.major, v.minor, v.patch);
                         #endif
+                        /* Print a list of any enabled quirks. */
+                        SDL12Compat_PrintQuirks();
                     }
                 }
             }
@@ -1262,7 +1423,6 @@ SDL_SetModuleHandle(void *handle)
     (void) handle;/* handled internally by SDL2 - nothing to do.. */
 }
 #endif
-
 
 DECLSPEC const SDL_version * SDLCALL
 SDL_Linked_Version(void)
@@ -1616,10 +1776,34 @@ AddVidModeToList(VideoModeList *vmode, SDL12_Rect *mode)
 
 /* A list of fake video modes which are included. */
 static SDL12_Rect fake_modes[] = {
+    { 0, 0, 7680, 4320 },
+    { 0, 0, 6144, 3160 },
+    { 0, 0, 5120, 2880 },
+    { 0, 0, 4096, 2304 },
+    { 0, 0, 3840, 2160 },
+    { 0, 0, 3200, 1800 },
+    { 0, 0, 2880, 1600 },
+    { 0, 0, 2560, 1600 },
+    { 0, 0, 2048, 1536 },
+    { 0, 0, 1920, 1440 },
+    { 0, 0, 1920, 1200 },
     { 0, 0, 1920, 1080 },
+    { 0, 0, 1680, 1050 },
+    { 0, 0, 1600, 1200 },
+    { 0, 0, 1600, 900 },
+    { 0, 0, 1440, 1080 },
+    { 0, 0, 1440, 900 },
+    { 0, 0, 1400, 1050 },
+    { 0, 0, 1368, 768 },
+    { 0, 0, 1280, 1024 },
+    { 0, 0, 1280, 960 },
+    { 0, 0, 1280, 800 },
     { 0, 0, 1280, 720 },
+    { 0, 0, 1152, 864 },
     { 0, 0, 1024, 768 },
+    { 0, 0, 864, 486 },
     { 0, 0, 800, 600 },
+    { 0, 0, 720, 480 },
     { 0, 0, 640, 480 }
 };
 
@@ -1634,8 +1818,7 @@ Init12VidModes(void)
     int i, j;
     SDL12_Rect prev_mode = { 0, 0, 0, 0 }, current_mode = { 0, 0, 0, 0 };
     /* We only want to enable fake modes if OpenGL Logical Scaling is enabled. */
-    const char *env = SDL20_getenv("SDL12COMPAT_OPENGL_SCALING");
-    SDL_bool use_fake_modes = (!env || SDL20_atoi(env)) ? SDL_TRUE : SDL_FALSE;
+    SDL_bool use_fake_modes = SDL12Compat_GetHintBoolean("SDL12COMPAT_OPENGL_SCALING", SDL_TRUE);
 
     if (VideoModesCount > 0) {
         return 0;  /* already did this. */
@@ -1737,14 +1920,11 @@ static int
 Init12Video(void)
 {
     const char *driver = SDL20_GetCurrentVideoDriver();
-    const char *layout_env = SDL20_getenv("SDL12COMPAT_USE_KEYBOARD_LAYOUT");
     SDL_DisplayMode mode;
     int i;
 
     /* Only override this if the env var is set, as the default is platform-specific. */
-    if (layout_env) {
-        TranslateKeyboardLayout = SDL20_atoi(layout_env) ? SDL_TRUE : SDL_FALSE;
-    }
+    TranslateKeyboardLayout = SDL12Compat_GetHintBoolean("SDL12COMPAT_USE_KEYBOARD_LAYOUT", TranslateKeyboardLayout);
 
     IsDummyVideo = ((driver != NULL) && (SDL20_strcmp(driver, "dummy") == 0)) ? SDL_TRUE : SDL_FALSE;
 
@@ -1824,6 +2004,7 @@ DECLSPEC int SDLCALL
 SDL_InitSubSystem(Uint32 sdl12flags)
 {
     Uint32 sdl20flags = 0;
+    const char *forcevideodrv;
     int rc;
 
 #ifdef __WINDOWS__
@@ -1843,7 +2024,12 @@ SDL_InitSubSystem(Uint32 sdl12flags)
     sdl12_compat_macos_init();
 #endif
 
-    FIXME("support SDL_INIT_EVENTTHREAD where it makes sense?");
+    /* Some applications need to force a specific videodriver. */
+    forcevideodrv = SDL12Compat_GetHint("SDL_VIDEODRIVER");
+    if (forcevideodrv) {
+        SDL20_setenv("SDL_VIDEODRIVER", forcevideodrv, 1);
+    }
+
     #define SETFLAG(flag) if (sdl12flags & SDL12_INIT_##flag) sdl20flags |= SDL_INIT_##flag
     SETFLAG(TIMER);
     SETFLAG(AUDIO);
@@ -1863,6 +2049,9 @@ SDL_InitSubSystem(Uint32 sdl12flags)
         if (Init12Video() < 0) {
             rc = -1;
         }
+
+        /* SDL_INIT_EVENTTHREAD takes effect when SDL_INIT_VIDEO is also set */
+        EventThreadEnabled = (sdl12flags & SDL12_INIT_EVENTTHREAD) ? SDL_TRUE : SDL_FALSE;
     }
 
 #ifdef __WINDOWS__
@@ -1962,6 +2151,14 @@ DECLSPEC void SDLCALL
 SDL_QuitSubSystem(Uint32 sdl12flags)
 {
     Uint32 sdl20flags, extraflags;
+
+    /* Some games (notably the Steam build of Multiwinia), will
+     * SDL_Quit(SDL_INIT_VIDEO) on resolution change, and never call
+     * SDL_Init() again before creating their new window.
+     */
+    if (SDL12Compat_GetHintBoolean("SDL12COMPAT_NO_QUIT_VIDEO", SDL_FALSE)) {
+        sdl12flags &= ~SDL12_INIT_VIDEO;
+    }
     InitFlags12to20(sdl12flags, &sdl20flags, &extraflags);
 
     if (extraflags & SDL12_INIT_CDROM) {
@@ -1974,6 +2171,9 @@ SDL_QuitSubSystem(Uint32 sdl12flags)
 
     if (sdl12flags & SDL12_INIT_VIDEO) {
         Quit12Video();
+
+        /* Shutdown the fake event thread. */
+        EventThreadEnabled = SDL_FALSE;
     }
 
     SDL20_QuitSubSystem(sdl20flags);
@@ -2113,6 +2313,17 @@ DECLSPEC int SDLCALL
 SDL_PeepEvents(SDL12_Event *events12, int numevents, SDL_eventaction action, Uint32 mask)
 {
     SDL12_Event dummy_event;
+
+    /* We don't actually implement an event thread in sdl12-compat, but some
+     * games will only call SDL_PeepEvents(), which doesn't otherwise pump
+     * events, and get stuck when they've consumed all the events.
+     *
+     * Just pumping the event loop here simulates an event thread well enough
+     * for most things.
+     */
+    if (EventThreadEnabled) {
+        SDL_PumpEvents();
+    }
 
     if (action == SDL_ADDEVENT) {
         int i;
@@ -4330,6 +4541,9 @@ DECLSPEC void SDLCALL
 SDL_FreeSurface(SDL12_Surface *surface12)
 {
     if (surface12 && (surface12 != VideoSurface12)) {
+        surface12->refcount--;
+        if (surface12->refcount)
+            return;
         SDL20_FreeSurface(surface12->surface20);
         if (surface12->format) {
             SDL20_free(surface12->format->palette);
@@ -4844,12 +5058,10 @@ glCopyTexSubImage3D_shim_for_scaling(GLenum target, GLint level, GLint xoffset, 
 static SDL_bool
 InitializeOpenGLScaling(const int w, const int h)
 {
-    const char *env;
     int alpha_size = 0;
 
     /* Support the MOUSE_RELATIVE_SCALING hint from SDL 2.0 for OpenGL scaling. */
-    env = SDL20_getenv("SDL_MOUSE_RELATIVE_SCALING");
-    UseMouseRelativeScaling = (!env || SDL20_atoi(env)) ? SDL_TRUE : SDL_FALSE;
+    UseMouseRelativeScaling = SDL12Compat_GetHintBoolean("SDL_MOUSE_RELATIVE_SCALING", SDL_TRUE);
 
     if (!OpenGLFuncs.SUPPORTS_GL_ARB_framebuffer_object) {
         return SDL_FALSE;  /* no FBOs, no scaling. */
@@ -4884,7 +5096,7 @@ InitializeOpenGLScaling(const int w, const int h)
     OpenGLFuncs.glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, OpenGLLogicalScalingDepth);
     OpenGLFuncs.glBindRenderbuffer(GL_RENDERBUFFER, 0);
 
-    if ( (OpenGLFuncs.glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) || OpenGLFuncs.glGetError() ) {
+    if ((OpenGLFuncs.glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) || OpenGLFuncs.glGetError()) {
         OpenGLFuncs.glBindFramebuffer(GL_FRAMEBUFFER, 0);
         OpenGLFuncs.glDeleteRenderbuffers(1, &OpenGLLogicalScalingColor);
         OpenGLFuncs.glDeleteRenderbuffers(1, &OpenGLLogicalScalingDepth);
@@ -4914,7 +5126,7 @@ InitializeOpenGLScaling(const int w, const int h)
         OpenGLFuncs.glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, OpenGLLogicalScalingMultisampleDepth);
         OpenGLFuncs.glBindRenderbuffer(GL_RENDERBUFFER, 0);
 
-        if ( (OpenGLFuncs.glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) || OpenGLFuncs.glGetError() ) {
+        if ((OpenGLFuncs.glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) || OpenGLFuncs.glGetError()) {
             OpenGLFuncs.glBindFramebuffer(GL_FRAMEBUFFER, 0);
             OpenGLFuncs.glDeleteRenderbuffers(1, &OpenGLLogicalScalingMultisampleColor);
             OpenGLFuncs.glDeleteRenderbuffers(1, &OpenGLLogicalScalingMultisampleDepth);
@@ -4948,8 +5160,8 @@ SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags12)
     Uint32 fullscreen_flags20 = 0;
     Uint32 appfmt;
     SDL_bool use_gl_scaling = SDL_FALSE;
-    const char *env;
     SDL_bool use_highdpi = SDL_TRUE;
+    SDL_bool fix_bordless_fs_win = SDL_TRUE;
 
     FIXME("Should we offer scaling for windowed modes, too?");
     if (flags12 & SDL12_OPENGL) {
@@ -4961,11 +5173,10 @@ SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags12)
            maybe need to export the symbol from here too, for those that link against
            OpenGL directly. UT2004 is known to use FBOs with SDL 1.2, and I assume
            idTech 4 games (Doom 3, Quake 4, Prey) do as well. */
-        env = SDL20_getenv("SDL12COMPAT_OPENGL_SCALING");
 
         /* for now we default GL scaling to ENABLED. If an app breaks or is linked directly
            to glBindFramebuffer, they'll need to turn it off with this environment variable */
-        use_gl_scaling = (!env || SDL20_atoi(env)) ? SDL_TRUE : SDL_FALSE;
+        use_gl_scaling = SDL12Compat_GetHintBoolean("SDL12COMPAT_OPENGL_SCALING", SDL_TRUE);
 
         /* default use_highdpi to false for OpenGL windows when not using
            OpenGL scaling as legacy OpenGL applications are unlikely to support
@@ -4975,10 +5186,11 @@ SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags12)
         use_highdpi = (flags12 & SDL12_FULLSCREEN) ? use_gl_scaling : SDL_FALSE;
     }
 
-    env = SDL20_getenv("SDL12COMPAT_HIGHDPI");
-    if (env) {
-        use_highdpi = SDL20_atoi(env) ? SDL_TRUE : SDL_FALSE;
-    }
+    use_highdpi = SDL12Compat_GetHintBoolean("SDL12COMPAT_HIGHDPI", use_highdpi);
+
+    fix_bordless_fs_win = SDL12Compat_GetHintBoolean("SDL12COMPAT_FIX_BORDERLESS_FS_WIN", fix_bordless_fs_win);
+
+    ForceGLSwapBufferContext = SDL12Compat_GetHintBoolean("SDL12COMPAT_FORCE_GL_SWAPBUFFER_CONTEXT", SDL_FALSE);
 
     FIXME("currently ignores SDL_WINDOWID, which we could use with SDL_CreateWindowFrom ...?");
 
@@ -5033,7 +5245,7 @@ SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags12)
     FIXME("don't do anything if the window's dimensions, etc haven't changed.");
     FIXME("we need to preserve VideoSurface12 (but not its pixels), I think...");
 
-    if (VideoSurface12 && ((VideoSurface12->flags & SDL12_OPENGL) != (flags12 & SDL12_OPENGL)) ) {
+    if (VideoSurface12 && ((VideoSurface12->flags & SDL12_OPENGL) != (flags12 & SDL12_OPENGL))) {
         EndVidModeCreate();  /* rebuild the window if moving to/from a GL context */
     } else if (VideoSurface12 && (VideoSurface12->surface20->format->format != appfmt)) {
         EndVidModeCreate();  /* rebuild the window if changing pixel format */
@@ -5106,6 +5318,11 @@ SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags12)
         } else {
             fullscreen_flags20 |= SDL_WINDOW_FULLSCREEN;
         }
+    } else if (fix_bordless_fs_win && (flags12 & SDL12_NOFRAME) && (width == dmode.w) && (height == dmode.h)) {
+        /* app appears to be trying to do a "borderless fullscreen windowed" mode, so just bump
+           it to FULLSCREEN_DESKTOP so it cooperates with various display managers
+           (into a fullscreen space on macOS, hide the Dock on Gnome, etc). */
+        fullscreen_flags20 |= SDL_WINDOW_FULLSCREEN_DESKTOP;
     }
 
     if (!VideoWindow20) {  /* create it */
@@ -5166,7 +5383,7 @@ SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags12)
     }
 
     if (flags12 & SDL12_OPENGL) {
-        const char *vsync_env = SDL20_getenv("SDL12COMPAT_SYNC_TO_VBLANK");
+        const char *vsync_env = SDL12Compat_GetHint("SDL12COMPAT_SYNC_TO_VBLANK");
         SDL_assert(!VideoTexture20);  /* either a new window or we destroyed all this */
         SDL_assert(!VideoRenderer20);
 
@@ -5228,9 +5445,9 @@ SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags12)
 
     } else {
         /* always use a renderer for non-OpenGL windows. */
-        const char *vsync_env = SDL20_getenv("SDL12COMPAT_SYNC_TO_VBLANK");
+        const char *vsync_env = SDL12Compat_GetHint("SDL12COMPAT_SYNC_TO_VBLANK");
         const char *old_scale_quality = SDL20_GetHint(SDL_HINT_RENDER_SCALE_QUALITY);
-        const char *scale_method_env = SDL20_getenv("SDL12COMPAT_SCALE_METHOD");
+        const char *scale_method_env = SDL12Compat_GetHint("SDL12COMPAT_SCALE_METHOD");
         const SDL_bool want_vsync = (vsync_env && SDL20_atoi(vsync_env)) ? SDL_TRUE : SDL_FALSE;
         const SDL_bool want_nearest = (scale_method_env && !SDL20_strcmp(scale_method_env, "nearest"))? SDL_TRUE : SDL_FALSE;
         SDL_RendererInfo rinfo;
@@ -6223,6 +6440,9 @@ DECLSPEC int SDLCALL
 SDL_GetWMInfo(SDL12_SysWMinfo *info12)
 {
     SDL_SysWMinfo info20;
+    SDL_bool temp_window = SDL_FALSE;
+    SDL_Window *win20 = VideoWindow20;
+    int rc;
 
     if (info12->version.major > 1) {
         SDL20_SetError("Requested version is unsupported");
@@ -6232,15 +6452,30 @@ SDL_GetWMInfo(SDL12_SysWMinfo *info12)
         return 0;  /* some programs only test against 0, not -1 */
     }
 
+    if (win20 == NULL) {
+        /* It was legal to call SDL_GetWMInfo without SDL_SetVideoMode() on X11 and Windows (and others...?) in 1.2. */
+        win20 = SDL20_CreateWindow("SDL_GetWMInfo support window", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 128, 128, SDL_WINDOW_HIDDEN);
+        if (!win20) {
+            return 0;
+        }
+        temp_window = SDL_TRUE;
+    }
+
     SDL_zero(info20);
     SDL_VERSION(&info20.version);
-    if (!SDL20_GetWindowWMInfo(VideoWindow20, &info20)) {
+    rc = SDL20_GetWindowWMInfo(win20, &info20);
+
+    if (temp_window) {
+        SDL20_DestroyWindow(win20);
+    }
+
+    if (!rc) {
         return 0;  /* some programs only test against 0, not -1 */
     }
 
 #if defined(SDL_VIDEO_DRIVER_WINDOWS)
     SDL_assert(info20.subsystem == SDL_SYSWM_WINDOWS);
-    info12->window = info20.info.win.window;
+    info12->window = temp_window ? 0 : info20.info.win.window;
     if (SDL_VERSIONNUM(info12->version.major, info12->version.minor, info12->version.patch) >= SDL_VERSIONNUM(1, 2, 5)) {
         info12->hglrc = (HGLRC) VideoGLContext20;
     }
@@ -6248,7 +6483,7 @@ SDL_GetWMInfo(SDL12_SysWMinfo *info12)
     SDL_assert(info20.subsystem == SDL_SYSWM_X11);
     info12->subsystem = SDL12_SYSWM_X11;
     info12->info.x11.display = info20.info.x11.display;
-    info12->info.x11.window = info20.info.x11.window;
+    info12->info.x11.window = temp_window ? 0 : info20.info.x11.window;
     if (SDL_VERSIONNUM(info12->version.major, info12->version.minor, info12->version.patch) >= SDL_VERSIONNUM(1, 0, 2)) {
         info12->info.x11.fswindow = 0;  /* these don't exist in SDL2. */
         info12->info.x11.wmwindow = 0;
@@ -6342,6 +6577,10 @@ SDL_CreateYUVOverlay(int w, int h, Uint32 format12, SDL12_Surface *display12)
     retval->hw_overlay = 1;
     retval->pitches = hwdata->pitches;
 
+    /* Some programs (e.g. mplayer) access pixels without locking. */
+    retval->pixels = hwdata->pixels;
+    hwdata->dirty = SDL_TRUE;
+
     return retval;
 }
 
@@ -6431,7 +6670,11 @@ DECLSPEC void SDLCALL
 SDL_FreeYUVOverlay(SDL12_Overlay *overlay12)
 {
     if (overlay12) {
-        SDL12_YUVData *hwdata = (SDL12_YUVData *) overlay12->hwdata;
+        SDL12_YUVData *hwdata;
+        if (QueuedDisplayOverlay12 == overlay12) {
+            QueuedDisplayOverlay12 = NULL;
+        }
+        hwdata = (SDL12_YUVData *) overlay12->hwdata;
         SDL20_DestroyTexture(hwdata->texture20);
         SDL20_free(hwdata->pixelbuf);
         SDL20_free(overlay12);
@@ -6540,11 +6783,11 @@ SDL_GL_GetAttribute(SDL12_GLattr attr, int* value)
     else if (attr == SDL12_GL_MULTISAMPLESAMPLES) {
         *value = OpenGLLogicalScalingSamples;
         return 0;
-    }        
+    }
     else if (attr == SDL12_GL_MULTISAMPLEBUFFERS) {
         *value = (OpenGLLogicalScalingSamples) ? 1 : 0;
         return 0;
-    }        
+    }
 
     /* SDL2 has a bug where FBO 0 must be bound or SDL20_GL_GetAttribute gives incorrect information.
        See https://github.com/libsdl-org/sdl12-compat/issues/150 */
@@ -6565,9 +6808,14 @@ DECLSPEC void SDLCALL
 SDL_GL_SwapBuffers(void)
 {
     if (VideoWindow20) {
+        /* Some applications, e.g. Awesomenauts, play with glXMakeCurrent() behind our backs and break SwapBuffers() */
+        if (ForceGLSwapBufferContext) {
+            SDL20_GL_MakeCurrent(VideoWindow20, VideoGLContext20);
+        }
+
         if (OpenGLLogicalScalingFBO != 0) {
             const GLboolean has_scissor = OpenGLFuncs.glIsEnabled(GL_SCISSOR_TEST);
-            const char *scale_method_env = SDL20_getenv("SDL12COMPAT_SCALE_METHOD");
+            const char *scale_method_env = SDL12Compat_GetHint("SDL12COMPAT_SCALE_METHOD");
             const SDL_bool want_nearest = (scale_method_env && !SDL20_strcmp(scale_method_env, "nearest"))? SDL_TRUE : SDL_FALSE;
             int physical_w, physical_h;
             GLfloat clearcolor[4];
@@ -7276,7 +7524,7 @@ InitializeCDSubsystem(void)
         return;
     }
 
-    cdpath = SDL20_getenv("SDL12COMPAT_FAKE_CDROM_PATH");
+    cdpath = SDL12Compat_GetHint("SDL12COMPAT_FAKE_CDROM_PATH");
     if (cdpath) {
         CDRomPath = SDL_strdup(cdpath);
     }
@@ -7932,8 +8180,8 @@ OpenSDL2AudioDevice(SDL_AudioSpec *want)
         if ( (want->freq > have->freq) ||
              (want->channels > have->channels) ||
              (want->samples > have->samples) ||
-             ( (SDL_AUDIO_ISFLOAT(want->format)) && (!SDL_AUDIO_ISFLOAT(have->format)) ) ||
-             ( SDL_AUDIO_BITSIZE(want->format) > SDL_AUDIO_BITSIZE(have->format) ) ) {
+             (SDL_AUDIO_ISFLOAT(want->format) && !SDL_AUDIO_ISFLOAT(have->format)) ||
+             (SDL_AUDIO_BITSIZE(want->format) > SDL_AUDIO_BITSIZE(have->format)) ) {
             SDL20_CloseAudio();
         } else {
             SDL20_LockAudio();  /* Device is already at acceptable parameters, just pause it for further setup by caller. */

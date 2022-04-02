@@ -4,10 +4,8 @@
 
 cmake_minimum_required(VERSION 3.0.0)
 project(sdl12_compat
-        VERSION 0.0.1
+        VERSION 1.2.53
         LANGUAGES C)
-
-set(SDL12_COMPAT_VERSION_STR "1.2.50")
 
 option(SDL12TESTS "Enable to build SDL-1.2 test programs" ON)
 option(SDL12DEVEL "Enable installing SDL-1.2 development headers" ON)
@@ -24,7 +22,7 @@ if(APPLE)
   set_source_files_properties(${OSX_SRCS} PROPERTIES LANGUAGE C)
   # the following matches SDL-1.2 Xcode project file
   set(DYLIB_COMPAT_VERSION 1.0.0 CACHE STRING "library compatibility version")
-  set(DYLIB_CURRENT_VERSION 12.50.0 CACHE STRING "library current version")
+  set(DYLIB_CURRENT_VERSION 12.53.0 CACHE STRING "library current version")
   include_directories("/opt/X11/include")  # hack.
   if(CMAKE_VERSION VERSION_LESS 3.9)
   else()
@@ -73,7 +71,7 @@ string(STRIP "${CMAKE_C_FLAGS}" CMAKE_C_FLAGS)
 
 if(UNIX AND NOT APPLE)
     set_target_properties(SDL PROPERTIES COMPILE_DEFINITIONS "_REENTRANT")
-    target_link_libraries(SDL PRIVATE dl)
+    target_link_libraries(SDL PRIVATE ${CMAKE_DL_LIBS})
 endif()
 if(APPLE)
     set_target_properties(SDL PROPERTIES INSTALL_NAME_DIR "")
@@ -86,7 +84,7 @@ if(APPLE)
     )
 elseif(UNIX AND NOT ANDROID)
     set_target_properties(SDL PROPERTIES
-        VERSION "${SDL12_COMPAT_VERSION_STR}"
+        VERSION "${PROJECT_VERSION}"
         SOVERSION "0"
         OUTPUT_NAME "SDL-1.2")
 elseif(WIN32)
@@ -94,18 +92,18 @@ elseif(WIN32)
     set(CMAKE_SHARED_LIBRARY_PREFIX "")
     set_target_properties(SDL PROPERTIES COMPILE_DEFINITIONS "DLL_EXPORT")
     set_target_properties(SDL PROPERTIES
-        VERSION "${SDL12_COMPAT_VERSION_STR}"
+        VERSION "${PROJECT_VERSION}"
         SOVERSION "0"
       OUTPUT_NAME "SDL")
 elseif(OS2)
     set_target_properties(SDL PROPERTIES COMPILE_DEFINITIONS "BUILD_SDL") # for DECLSPEC
     set_target_properties(SDL PROPERTIES
-        VERSION "${SDL12_COMPAT_VERSION_STR}"
+        VERSION "${PROJECT_VERSION}"
         SOVERSION "0"
         OUTPUT_NAME "SDL12")
 else()
     set_target_properties(SDL PROPERTIES
-        VERSION "${SDL12_COMPAT_VERSION_STR}"
+        VERSION "${PROJECT_VERSION}"
         SOVERSION "0"
       OUTPUT_NAME "SDL")
 endif()
@@ -198,7 +196,7 @@ if(SDL12TESTS)
     test_program(testerror "test/testerror.c")
     test_program(testfile "test/testfile.c")
     test_program(testgamma "test/testgamma.c")
-    test_program(testthread "test/testhread.c")
+    test_program(testthread "test/testthread.c")
     test_program(testiconv "test/testiconv.c")
     test_program(testjoystick "test/testjoystick.c")
     test_program(testkeys "test/testkeys.c")
@@ -220,7 +218,7 @@ if(SDL12TESTS)
     test_program(testdyngl "test/testdyngl.c")
     test_program(testgl "test/testgl.c")
     if(OPENGL_FOUND)
-      if(CMAKE_VERSION VERSION_LESS 3.10)
+      if(CMAKE_VERSION VERSION_LESS 3.10 OR NOT OPENGL_opengl_LIBRARY)
         target_link_libraries(testgl ${OPENGL_gl_LIBRARY})
       else()
         target_link_libraries(testgl ${OPENGL_opengl_LIBRARY})
@@ -239,8 +237,6 @@ install(TARGETS SDL SDLmain
 )
 
 if(SDL12DEVEL)
-  set(SDL_VERSION "${SDL12_COMPAT_VERSION_STR}")
-
   install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
   if(NOT MSVC)
@@ -258,7 +254,7 @@ if(SDL12DEVEL)
       set(SDL_CFLAGS "-D_GNU_SOURCE=1 -D_REENTRANT")
       set(SDL_RLD_FLAGS "")  # !!! FIXME: this forces rpath, which we might want?
       set(SDL_LIBS "-lSDL")
-      set(SDL_STATIC_LIBS "-ldl")
+      set(SDL_STATIC_LIBS ${CMAKE_DL_LIBS})
       if(NOT STATICDEVEL)
         set(SDL_STATIC_LIBS "")
       endif()
@@ -301,9 +297,9 @@ if(STATICDEVEL AND SDL12DEVEL)
   add_library(SDL-static STATIC ${SDL12COMPAT_SRCS})
   target_include_directories(SDL-static PRIVATE ${SDL2_INCLUDE_DIRS})
   set_target_properties(SDL-static PROPERTIES COMPILE_DEFINITIONS "_REENTRANT")
-  target_link_libraries(SDL-static PRIVATE dl)
+  target_link_libraries(SDL-static PRIVATE ${CMAKE_DL_LIBS})
   set_target_properties(SDL-static PROPERTIES
-          VERSION "${SDL12_COMPAT_VERSION_STR}"
+          VERSION "${PROJECT_VERSION}"
         OUTPUT_NAME "SDL")
 
   install(TARGETS SDL-static
