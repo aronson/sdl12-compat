@@ -2142,6 +2142,7 @@ Quit12Video(void)
     VideoInfoVfmt20 = NULL;
     EventFilter12 = NULL;
     EventQueueAvailable = EventQueueHead = EventQueueTail = NULL;
+    SDL20_memset(&PendingKeydownEvent, 0, sizeof(SDL12_Event));
     SDL_FreeCursor(CurrentCursor12);
     VideoModes = NULL;
     VideoModesCount = 0;
@@ -5235,7 +5236,7 @@ SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags12)
     switch (bpp) {
         case  8: appfmt = SDL_PIXELFORMAT_INDEX8; break;
         case 16: appfmt = SDL_PIXELFORMAT_RGB565; FIXME("bgr instead of rgb?"); break;
-        case 24: appfmt = SDL_PIXELFORMAT_RGB24; FIXME("bgr instead of rgb?"); break;
+        case 24: appfmt = SDL_PIXELFORMAT_RGB888; FIXME("bgr instead of rgb?"); break;
         case 32: appfmt = SDL_PIXELFORMAT_XRGB8888; FIXME("bgr instead of rgb?"); break;
         default: SDL20_SetError("Unsupported bits-per-pixel"); return NULL;
     }
@@ -5830,6 +5831,10 @@ SDL_DisplayFormatAlpha(SDL12_Surface *surface12)
 static void
 PresentScreen(void)
 {
+    if (!VideoRenderer20) {
+        return;
+    }
+
     SDL20_RenderClear(VideoRenderer20);
     SDL20_RenderCopy(VideoRenderer20, VideoTexture20, NULL, NULL);
 
