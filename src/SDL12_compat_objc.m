@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2021 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2022 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -21,10 +21,7 @@
 
 /* This file contains some macOS-specific support code */
 
-#define __BUILDING_SDL12_COMPAT__ 1
-#include "SDL.h"
-
-#ifdef __MACOSX__
+#ifdef __APPLE__
 #include <Cocoa/Cocoa.h>
 
 #if __GNUC__ >= 4

@@ -144,26 +144,33 @@ SDL12COMPAT_HIGHDPI=1 SDL12COMPAT_OPENGL_SCALING=0 %command%
 will run `%command%` with high-dpi monitor support enabled, but OpenGL
 scaling support disabled.
 
+(While these environment variables are checked at various times throughout
+the lifetime of the app, sdl12-compat expects these to be set before the
+process starts and not change during the life of the process, and any
+places where changing it later might affect operation is purely accidental
+and might change. That is to say: don't write an SDL 1.2-based app with
+plans to tweak these values on the fly!)
+
 The available options are:
 
-- SDL12COMPAT_DEBUG_LOGGING:
+- SDL12COMPAT_DEBUG_LOGGING: (checked at startup)
   If enabled, print debugging messages to stderr.  These messages are
   mostly useful to developers, or when trying to track down a specific
   bug.
 
-- SDL12COMPAT_FAKE_CDROM_PATH:
+- SDL12COMPAT_FAKE_CDROM_PATH: (checked during SDL_Init)
   A path to a directory containing MP3 files (named trackXX.mp3, where
   XX is a two-digit track number) to be used by applications which play
   CD audio.  Using an absolute path is recommended: relative paths are
   not guaranteed to work correctly.
 
-- SDL12COMPAT_OPENGL_SCALING:
+- SDL12COMPAT_OPENGL_SCALING: (checked during SDL_Init)
   Enables scaling of OpenGL applications to the current desktop resolution.
   If disabled, applications can change the real screen resolution.  This
   option is enabled by default, but not all applications are compatible
   with it: try changing this if you can only see a black screen.
 
-- SDL12COMPAT_FIX_BORDERLESS_FS_WIN:
+- SDL12COMPAT_FIX_BORDERLESS_FS_WIN: (checked during SDL_SetVideoMode)
   Enables turning borderless windows at the desktop resolution into actual
   fullscreen windows (so they'll go into a separate space on macOS and
   properly hide dock windows on other desktop environments, etc).
@@ -172,23 +179,23 @@ The available options are:
   so it can be manually disabled, in case this causes some negative result
   we haven't anticipated.
 
-- SDL12COMPAT_SCALE_METHOD:
+- SDL12COMPAT_SCALE_METHOD: (checked during SDL_Init)
   Choose the scaling method used when applications render at a non-native
   resolution.  The options are `nearest`, for nearest-neighbour sampling
   (more pixelated) and `linear` for bilinear sampling (blurrier).
 
-- SDL12COMPAT_HIGHDPI:
+- SDL12COMPAT_HIGHDPI: (checked during SDL_SetVideoMode)
   Advertise the application as supporting high-DPI displays.  Enabling
   this will usually result in sharper graphics, but on some applications
   text and other elements may become very small.
 
-- SDL12COMPAT_SYNC_TO_VBLANK:
+- SDL12COMPAT_SYNC_TO_VBLANK: (checked during SDL_SetVideoMode)
   Force the application to sync (or not sync) to the vertical blanking
   interval (VSync).  When enabled, this will cap the application's
   framerate to the screen's refresh rate (and may resolve issues with
   screen tearing).
 
-- SDL12COMPAT_USE_KEYBOARD_LAYOUT:
+- SDL12COMPAT_USE_KEYBOARD_LAYOUT: (checked during SDL_Init)
   Make all keyboard input take the current keyboard layout into account.
   This may need to be disabled for applications which provide their own
   keyboard layout support, or if the position of the keys on the keyboard
@@ -196,11 +203,72 @@ The available options are:
   (in most applications) will take the keyboard layout into account
   regardless of this option.
 
-- SDL_MOUSE_RELATIVE_SCALING:
+- SDL12COMPAT_USE_GAME_CONTROLLERS: (checked during SDL_Init)
+  Use SDL2's higher-level Game Controller API to expose joysticks instead of
+  its lower-level joystick API. The benefit of this is that you can exert
+  more control over arbitrary hardware (deadzones, button mapping, device
+  name, etc), and button and axes layouts are consistent (what is physically
+  located where an Xbox360's "A" button is will always be SDL 1.2 joystick
+  button 0, "B" will be 1, etc). The downside is it might not expose all of
+  a given piece of hardware's functionality, or simply not make sense in
+  general...if you need to use a flight stick, for example, you should not
+  use this hint. If there is no known game controller mapping for a joystick,
+  and this hint is in use, it will not be listed as an availble device.
+
+- SDL12COMPAT_WINDOW_SCALING: (checked during SDL_SetVideoMode)
+  When creating non-fullscreen, non-resizable windows, use this variable to
+  size the window differently. If, for example, you have a 4K monitor and the
+  game is running in a window the size of a postage stamp, you might set this
+  to 2 to double the size of the window. Fractional values work, so "1.5"
+  might be a more-pleasing value on your hardware. You can even shrink the
+  window with values less than 1.0! When scaling a window like this,
+  sdl12-compat will use all the usual scaling options
+  (SDL12COMPAT_OPENGL_SCALING, SDL12COMPAT_SCALE_METHOD, etc). If sdl12-compat
+  can't scale the contents of the window for various technical reasons, it
+  will create the window at the originally-requested size. If this variable
+  isn't specified, it defaults to 1.0 (no scaling).
+
+- SDL12COMPAT_MAX_VIDMODE: (checked during SDL_Init)
+  This is a string in the form of `WxH`, where `W` is the maximum width
+  and `H` is the maximum height (for example: `640x480`). The list of valid
+  resolutions that will be reported by SDL_ListModes and SDL_VideoModeOK will
+  not include any dimensions that are wider or taller than these sizes. A size
+  of zero will be ignored, so for `0x480` a resolution of 1920x480 would be
+  accepted). If not specified, or set to `0x0`, no resolution clamping is done.
+  This is for old software-rendered games that might always choose the largest
+  resolution offered, but never conceived of 4K displays. In these cases, it
+  might be better for them to use a smaller resolution and let sdl12-compat
+  scale their output up with the GPU.
+
+- SDL_MOUSE_RELATIVE_SCALING: (checked during SDL_SetVideoMode)
   If enabled, relative mouse motion is scaled when the application is
   running at a non-native resolution.  This may be required with some
   applications which use their own mouse cursors. See also:
   https://wiki.libsdl.org/SDL_HINT_MOUSE_RELATIVE_SCALING
+
+- SDL12COMPAT_ALLOW_THREADED_DRAWS: (checked during SDL_Init)
+  Enabled by default.
+  If disabled, calls to `SDL_UpdateRects()` from non-main threads are
+  converted into requests for the main thread to carry out the update later.
+  The thread that called `SDL_SetVideoMode()` is treated as the main thread.
+
+- SDL12COMPAT_ALLOW_THREADED_PUMPS: (checked during SDL_Init)
+  Enabled by default.
+  If disabled, calls to `SDL_PumpEvents()` from non-main threads are
+  completely ignored.
+  The thread that called `SDL_SetVideoMode()` is treated as the main thread.
+
+- SDL12COMPAT_ALLOW_SYSWM: (checked during SDL_Init)
+  Enabled by default.
+  If disabled, SDL_SYSWMEVENT events will not be delivered to the app, and
+  SDL_GetWMInfo() will fail; this is useful if you have a program that
+  tries to access X11 directly through SDL's interfaces, but can survive
+  without it, becoming compatible with, for example, Wayland, or perhaps
+  just avoiding a bug in target-specific code. Note that sdl12-compat already
+  disallows SysWM things unless SDL2 is using its "windows" or "x11" video
+  backends, because SDL 1.2 didn't have wide support for its SysWM APIs
+  outside of Windows and X11 anyhow.
+
 
 # Compatibility issues with OpenGL scaling
 

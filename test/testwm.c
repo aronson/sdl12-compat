@@ -348,7 +348,6 @@ int SDLCALL FilterEvents(const SDL_Event *event)
 	}
 }
 
-
 static char testtitle[] = "Testing  1.. 2.. 3...";
 
 int main(int argc, char *argv[])
@@ -459,6 +458,16 @@ int main(int argc, char *argv[])
 			#endif
 		}
 	}
+
+	{
+		typedef SDL_Window* (SDLCALL *fnSDL12COMPAT_GetWindow)(void);
+		fnSDL12COMPAT_GetWindow pfnSDL12COMPAT_GetWindow = (fnSDL12COMPAT_GetWindow) SDL_GL_GetProcAddress("SDL12COMPAT_GetWindow");
+		printf("SDL12COMPAT_GetWindow address is %p%s\n", pfnSDL12COMPAT_GetWindow, pfnSDL12COMPAT_GetWindow ? "" : " (probably using classic SDL 1.2)");
+		if (pfnSDL12COMPAT_GetWindow != NULL) {
+			printf("SDL 2.0 window: %p\n", pfnSDL12COMPAT_GetWindow());
+		}
+	}
+
 	SDL_EventState(SDL_SYSWMEVENT, SDL_ENABLE);
 #endif
 

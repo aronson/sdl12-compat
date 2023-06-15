@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2021 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2022 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -32,7 +32,7 @@ real SDL-1.2 available to you. */
 #include <intrin.h>
 #endif
 
-/* This is all lifted out of SDL2's zlib-licensed headers. */
+/* These are all lifted out of SDL2's zlib-licensed headers. */
 
 #define SDL_LIL_ENDIAN  1234
 #define SDL_BIG_ENDIAN  4321
@@ -41,7 +41,7 @@ real SDL-1.2 available to you. */
 #ifdef __linux__
 #include <endian.h>
 #define SDL_BYTEORDER  __BYTE_ORDER
-#elif defined(__OpenBSD__)
+#elif defined(__OpenBSD__) || defined(__DragonFly__)
 #include <endian.h>
 #define SDL_BYTEORDER  BYTE_ORDER
 #elif defined(__FreeBSD__) || defined(__NetBSD__)
@@ -60,7 +60,7 @@ real SDL-1.2 available to you. */
 #if defined(__hppa__) || \
     defined(__m68k__) || defined(mc68000) || defined(_M_M68K) || \
     (defined(__MIPS__) && defined(__MIPSEB__)) || \
-    defined(__ppc__) || defined(__POWERPC__) || defined(_M_PPC) || \
+    defined(__ppc__) || defined(__POWERPC__) || defined(__powerpc__) || defined(__PPC__) || \
     defined(__sparc__)
 #define SDL_BYTEORDER   SDL_BIG_ENDIAN
 #else

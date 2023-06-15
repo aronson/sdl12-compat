@@ -4,7 +4,7 @@
 
 cmake_minimum_required(VERSION 3.0.0)
 project(sdl12_compat
-        VERSION 1.2.53
+        VERSION 1.2.65
         LANGUAGES C)
 
 option(SDL12TESTS "Enable to build SDL-1.2 test programs" ON)
@@ -12,17 +12,28 @@ option(SDL12DEVEL "Enable installing SDL-1.2 development headers" ON)
 option(STATICDEVEL "Enable installing static link library" OFF)
 
 if(STATICDEVEL AND NOT (CMAKE_SYSTEM_NAME MATCHES "Linux"))
-  MESSAGE(FATAL_ERROR "Static builds are only supported on Linux.")
+  message(FATAL_ERROR "Static builds are only supported on Linux.")
 endif()
+
+list(APPEND CMAKE_MODULE_PATH
+    "${CMAKE_CURRENT_LIST_DIR}/cmake/modules"
+)
+
+include(CheckCSourceCompiles)
+include(CheckIncludeFile)
+include(CheckCCompilerFlag)
+include(GNUInstallDirs)
 
 set(CMAKE_SKIP_RPATH TRUE)
 
 if(APPLE)
   set(OSX_SRCS "src/SDL12_compat_objc.m")
   set_source_files_properties(${OSX_SRCS} PROPERTIES LANGUAGE C)
-  # the following matches SDL-1.2 Xcode project file
-  set(DYLIB_COMPAT_VERSION 1.0.0 CACHE STRING "library compatibility version")
-  set(DYLIB_CURRENT_VERSION 12.53.0 CACHE STRING "library current version")
+  # compatibility version set to match SDL-1.2 autotools build
+  # Xcode project file uses 1.0.0, but it's more compatible to use the
+  # higher version.
+  set(DYLIB_COMPAT_VERSION 12.0.0 CACHE STRING "library compatibility version")
+  set(DYLIB_CURRENT_VERSION 12.65.0 CACHE STRING "library current version")
   include_directories("/opt/X11/include")  # hack.
   if(CMAKE_VERSION VERSION_LESS 3.9)
   else()
@@ -41,12 +52,10 @@ set(SDL12COMPAT_SRCS
 )
 add_library(SDL SHARED ${SDL12COMPAT_SRCS})
 
-include(CheckCSourceCompiles)
-include(CheckIncludeFile)
-include(CheckCCompilerFlag)
-
-include(GNUInstallDirs)
-include("cmake/modules/FindSDL2.cmake")
+find_package(SDL2)
+if(NOT SDL2_INCLUDE_DIRS)
+  message(FATAL_ERROR "Could not find SDL2 headers")
+endif()
 target_include_directories(SDL PRIVATE ${SDL2_INCLUDE_DIRS})
 
 set(EXTRA_CFLAGS )
@@ -74,7 +83,6 @@ if(UNIX AND NOT APPLE)
     target_link_libraries(SDL PRIVATE ${CMAKE_DL_LIBS})
 endif()
 if(APPLE)
-    set_target_properties(SDL PROPERTIES INSTALL_NAME_DIR "")
     set_target_properties(SDL PROPERTIES COMPILE_DEFINITIONS "_THREAD_SAFE")
     set_target_properties(SDL PROPERTIES LINK_FLAGS
             "-Wl,-compatibility_version,${DYLIB_COMPAT_VERSION} -Wl,-current_version,${DYLIB_CURRENT_VERSION}")
@@ -94,7 +102,7 @@ elseif(WIN32)
     set_target_properties(SDL PROPERTIES
         VERSION "${PROJECT_VERSION}"
         SOVERSION "0"
-      OUTPUT_NAME "SDL")
+        OUTPUT_NAME "SDL")
 elseif(OS2)
     set_target_properties(SDL PROPERTIES COMPILE_DEFINITIONS "BUILD_SDL") # for DECLSPEC
     set_target_properties(SDL PROPERTIES
@@ -105,7 +113,7 @@ else()
     set_target_properties(SDL PROPERTIES
         VERSION "${PROJECT_VERSION}"
         SOVERSION "0"
-      OUTPUT_NAME "SDL")
+        OUTPUT_NAME "SDL")
 endif()
 
 if(MINGW)
@@ -132,7 +140,6 @@ return 0; }" IS_X86)
       string(REGEX REPLACE "/RTC(su|[1su])" "" ${flag_var} "${${flag_var}}")
     endforeach(flag_var)
 endif()
-
 
 # SDLmain library...
 if(APPLE)
@@ -254,7 +261,10 @@ if(SDL12DEVEL)
       set(SDL_CFLAGS "-D_GNU_SOURCE=1 -D_REENTRANT")
       set(SDL_RLD_FLAGS "")  # !!! FIXME: this forces rpath, which we might want?
       set(SDL_LIBS "-lSDL")
-      set(SDL_STATIC_LIBS ${CMAKE_DL_LIBS})
+      set(SDL_STATIC_LIBS "")
+      foreach(lib ${CMAKE_DL_LIBS})
+          set(SDL_STATIC_LIBS "-l${lib}")
+      endforeach()
       if(NOT STATICDEVEL)
         set(SDL_STATIC_LIBS "")
       endif()

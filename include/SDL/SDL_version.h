@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2021 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2022 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -33,7 +33,7 @@ real SDL-1.2 available to you. */
 /* We bumped the patchlevel to 50 for sdl12-compat */
 #define SDL_MAJOR_VERSION 1
 #define SDL_MINOR_VERSION 2
-#define SDL_PATCHLEVEL 50
+#define SDL_PATCHLEVEL 65
 
 typedef struct SDL_version
 {
@@ -43,13 +43,13 @@ typedef struct SDL_version
 } SDL_version;
 
 #define SDL_VERSION(X) { \
-    (X)->major = 1; \
-    (X)->minor = 2; \
-    (X)->patch = 50; \
+    (X)->major = SDL_MAJOR_VERSION; \
+    (X)->minor = SDL_MINOR_VERSION; \
+    (X)->patch = SDL_PATCHLEVEL; \
 }
 
 #define SDL_VERSIONNUM(X, Y, Z) ((X)*1000 + (Y)*100 + (Z))
-#define SDL_COMPILEDVERSION SDL_VERSIONNUM(1, 2, 50)
+#define SDL_COMPILEDVERSION SDL_VERSIONNUM(SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL)
 #define SDL_VERSION_ATLEAST(X, Y, Z) (SDL_COMPILEDVERSION >= SDL_VERSIONNUM(X, Y, Z))
 
 extern DECLSPEC const SDL_version * SDLCALL SDL_Linked_Version(void);

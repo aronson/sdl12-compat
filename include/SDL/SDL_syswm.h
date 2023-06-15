@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2021 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2022 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -121,6 +121,9 @@ real SDL-1.2 available to you. */
 #include "begin_code.h"
 
 extern DECLSPEC int SDLCALL SDL_GetWMInfo(SDL_SysWMinfo *info);
+
+typedef struct SDL_Window SDL_Window;
+extern DECLSPEC SDL_Window * SDLCALL SDL12COMPAT_GetWindow(void);
 
 #include "close_code.h"
 
