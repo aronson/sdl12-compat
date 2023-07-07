@@ -54,6 +54,8 @@ typedef unsigned __int64 uint64_t;
 #include <stdarg.h>
 #define HAVE_STDARG_H 1
 
+#define HAVE_STDDEF_H 1
+
 /* for now, let's try and say everything that we care about that isn't Windows
 has these C runtime functions available. We're trying to avoid a configure
 stage, though. Send patches if your platform lacks something. */
@@ -127,9 +129,13 @@ stage, though. Send patches if your platform lacks something. */
 #endif
 #endif
 
+#if defined(__GLIBC__)
+/* glibc certainly includes this, send patches if your OS does too */
+#define HAVE_MALLOC_H 1
+#endif
+
 /* things that aren't necessarily in Linux, some are MSVC C runtime, some are BSD. Send patches. */
 #if 0
-#define HAVE_MALLOC_H 1
 #define HAVE_BCOPY 1
 #define HAVE_ATOI 1
 #define HAVE_ATOF 1
