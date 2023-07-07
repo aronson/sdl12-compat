@@ -21,7 +21,6 @@
 
 /* This file contains functions for backwards compatibility with SDL 1.2 */
 
-
 #include "SDL20_include_wrapper.h"
 
 /*
@@ -8490,13 +8489,18 @@ SDL_LoadWAV_RW(SDL12_RWops *rwops12, int freerwops12,
     return retval;
 }
 
+typedef void (*free_t)(void *);
+static free_t msvcrt_free = NULL;
+
 DECLSPEC void SDLCALL
 SDL_FreeWAV (Uint8 *audio_buf)
 {
+    if ( msvcrt_free == NULL ) {
+        msvcrt_free = (free_t)(GetProcAddress(GetModuleHandle(TEXT("msvcrt")), "free"));
+    }
+
     if ( audio_buf != NULL ) {
-        typedef void (*free_t)(void *);
-	    free_t msvcrt_free = (free_t)(GetProcAddress(GetModuleHandle(TEXT("msvcrt")), "free"));
-	    msvcrt_free(audio_buf);
+	msvcrt_free(audio_buf);
     }
 }
 
