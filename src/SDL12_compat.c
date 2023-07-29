@@ -6353,6 +6353,11 @@ SaveDestAlpha(SDL12_Surface *src12, SDL12_Surface *dst12, SDL_Rect *dstrect20, U
      *
      * In SDL2, we change the destination alpha. We have to save it off in this case, which sucks.
      */
+
+    // Disable this to prevent map export locking the game for many minutes
+    *retval = NULL;
+    return 0;
+
     Uint8 *dstalpha = NULL;
     const SDL_bool save_dstalpha = (PreserveDestinationAlpha && (src12->flags & SDL12_SRCALPHA) && dst12->format->Amask && ((src12->format->alpha != 255) || src12->format->Amask)) ? SDL_TRUE : SDL_FALSE;
 
