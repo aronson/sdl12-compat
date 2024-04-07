@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2022 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -897,10 +897,12 @@
 #define SDL_GDKSuspendComplete IGNORE_THIS_VERSION_OF_SDL_GDKSuspendComplete
 #define SDL_HasWindowSurface IGNORE_THIS_VERSION_OF_SDL_HasWindowSurface
 #define SDL_DestroyWindowSurface IGNORE_THIS_VERSION_OF_SDL_DestroyWindowSurface
+#define SDL_GDKGetDefaultUser IGNORE_THIS_VERSION_OF_SDL_GDKGetDefaultUser
 
+
+#if defined(_WIN32) || defined(__OS2__)
 /* *** HACK HACK HACK:
  * *** Avoid including SDL_thread.h: it defines SDL_CreateThread() as a macro */
-#if defined(_WIN32) || defined(__OS2__)
 #define _SDL_thread_h
 #define SDL_thread_h_
 #define SDL_PASSED_BEGINTHREAD_ENDTHREAD
@@ -917,6 +919,12 @@
 /* Headers from SDL2 >= 2.0.7 needed for SDL_AudioStream. */
 #if !SDL_VERSION_ATLEAST(2,0,7)
 #error You need to compile against SDL >= 2.0.7 headers.
+#endif
+
+#if !SDL_VERSION_ATLEAST(2,0,10)
+// SDL_PixelFormatEnum was an anonymous enum before SDL 2.0.10.
+// Force it to Uint32 if compiling on older headers.
+typedef Uint32 SDL_PixelFormatEnum;
 #endif
 
 /* Missing SDL_thread.h stuff (see above) */
@@ -938,6 +946,7 @@ typedef void (__cdecl *pfnSDL_CurrentEndThread) (unsigned);
 #undef CreateSemaphore
 #undef CreateMutex
 #endif /* _WIN32 */
+
 
 #ifdef SDL_BlitSurface
 #undef SDL_BlitSurface
@@ -4425,6 +4434,10 @@ typedef void (__cdecl *pfnSDL_CurrentEndThread) (unsigned);
 
 #ifdef SDL_DestroyWindowSurface
 #undef SDL_DestroyWindowSurface
+#endif
+
+#ifdef SDL_GDKGetDefaultUser
+#undef SDL_GDKGetDefaultUser
 #endif
 
 /* undefine these macros too: */

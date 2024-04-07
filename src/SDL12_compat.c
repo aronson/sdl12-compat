@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2022 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -28,7 +28,7 @@
  * should be way ahead of what SDL-1.2 Classic would report, so apps can
  * decide if they're running under the compat layer, if they really care.
  */
-#define SDL12_COMPAT_VERSION 65
+#define SDL12_COMPAT_VERSION 69
 
 #include <stdarg.h>
 #include <limits.h>
@@ -980,6 +980,7 @@ static SDL_Window *VideoWindow20 = NULL;
 static SDL_Renderer *VideoRenderer20 = NULL;
 static SDL_mutex *VideoRendererLock = NULL;
 static SDL_Texture *VideoTexture20 = NULL;
+static SDL12_Surface VideoSurface12Location;
 static SDL12_Surface *VideoSurface12 = NULL;
 static SDL_Palette *VideoPhysicalPalette20 = NULL;
 static Uint32 VideoSurfacePresentTicks = 0;
@@ -1276,6 +1277,14 @@ static QuirkEntryType quirks[] = {
     {"fillets", "SDL12COMPAT_ALLOW_SYSWM", "0"},
     {"fillets", "SDL12COMPAT_COMPATIBILITY_AUDIOCVT", "1"},
 
+    /* Hyperspace Delivery Boy relies on the exact imprecision of the format conversion in some 
+       earlier versions of SDL 1.2. It also recommends 16-bit in the README, so force it. */
+    {"hdb", "SDL12COMPAT_MAX_BPP", "16"},
+
+    /* Mark of the Ninja doesn't work with OpenGL scaling */
+    {"ninja-bin32", "SDL12COMPAT_OPENGL_SCALING", "0"},
+    {"ninja-bin64", "SDL12COMPAT_OPENGL_SCALING", "0"},
+
     /* Misuses SDL_AudioCVT */
     {"pink-pony", "SDL12COMPAT_COMPATIBILITY_AUDIOCVT", "1"},
     {"pink-pony.bin", "SDL12COMPAT_COMPATIBILITY_AUDIOCVT", "1"},
@@ -1283,6 +1292,16 @@ static QuirkEntryType quirks[] = {
     /* doesn't render with GL scaling enabled */
     {"scorched3d", "SDL12COMPAT_OPENGL_SCALING", "0"},
     {"scorched3dc", "SDL12COMPAT_OPENGL_SCALING", "0"},
+
+    /* Trine (the old Humble Bundle version from 2011) doesn't render in-game with GL scaling enabled. */
+    {"trine-bin32", "SDL12COMPAT_OPENGL_SCALING", "0"},
+    {"trine-bin64", "SDL12COMPAT_OPENGL_SCALING", "0"},
+
+    /* Trine (the old Humble Bundle version from 2011)'s launcher needs X11, and needs XInitThreads _before_ GTK+ gets in there. */
+    {"trine-launcher32", "SDL_VIDEODRIVER", "x11"},
+    {"trine-launcher32", "SDL12COMPAT_FORCE_XINITTHREADS", "1"},
+    {"trine-launcher64", "SDL_VIDEODRIVER", "x11"},
+    {"trine-launcher64", "SDL12COMPAT_FORCE_XINITTHREADS", "1"},
 
     /* boswars has a bug where SDL_AudioCVT must not require extra buffer space. See Issue #232. */
     {"boswars", "SDL12COMPAT_COMPATIBILITY_AUDIOCVT", "1"},
@@ -1302,8 +1321,10 @@ static QuirkEntryType quirks[] = {
 
 #ifdef __linux__
 static void OS_GetExeName(char *buf, const unsigned maxpath) {
+    int ret;
     buf[0] = '\0';
-    readlink("/proc/self/exe", buf, maxpath);
+    ret = readlink("/proc/self/exe", buf, maxpath);
+    (void)ret;
 }
 #elif defined(_WIN32)
 static void OS_GetExeName(char *buf, const unsigned maxpath) {
@@ -1382,6 +1403,18 @@ SDL12Compat_GetHintFloat(const char *name, float default_value)
     }
 
     return (float) SDL20_atof(val);
+}
+
+static int
+SDL12Compat_GetHintInt(const char *name, int default_value)
+{
+    const char *val = SDL12Compat_GetHint(name);
+
+    if (!val) {
+        return default_value;
+    }
+
+    return SDL20_atoi(val);
 }
 
 static void
@@ -1486,6 +1519,22 @@ LoadSDL20(void)
                         #endif
                     }
                     SDL12Compat_ApplyQuirks(force_x11);  /* Apply and maybe print a list of any enabled quirks. */
+
+                    #ifdef __linux__
+                    {
+                        const char *viddrv = SDL20_getenv("SDL_VIDEODRIVER");
+                        if (viddrv && (SDL20_strcmp(viddrv, "x11") == 0) && SDL12Compat_GetHintBoolean("SDL12COMPAT_FORCE_XINITTHREADS", SDL_TRUE)) {
+                            void *lib = dlopen("libX11.so.6", RTLD_GLOBAL|RTLD_NOW);
+                            if (lib) {
+                                int (*pXInitThreads)(void) = (int(*)(void)) dlsym(lib, "XInitThreads");
+                                if (pXInitThreads) {
+                                    pXInitThreads();
+                                }
+                                /* leave the library open, so the XInitThreads sticks. */
+                            }
+                        }
+                    }
+                    #endif
                 }
             }
             if (!okay) {
@@ -2001,6 +2050,21 @@ SDL_JoystickOpened(int device_index)
     return SDL20_AtomicGet(&JoystickList[device_index].refcount) ? 1 : 0;
 }
 
+static SDL_PixelFormatEnum
+BPPToPixelFormat(unsigned bpp)
+{
+    #if !SDL_VERSION_ATLEAST(2,0,14)
+    #define SDL_PIXELFORMAT_XRGB8888 SDL_PIXELFORMAT_RGB888
+    #endif
+    switch (bpp) {
+        case  8: return SDL_PIXELFORMAT_INDEX8;
+        case 16: return SDL_PIXELFORMAT_RGB565;
+        case 24: return SDL_PIXELFORMAT_BGR24;
+        case 32: return SDL_PIXELFORMAT_XRGB8888;
+        default: SDL20_SetError("Unsupported bits-per-pixel"); return SDL_PIXELFORMAT_UNKNOWN;
+    }
+}
+
 static SDL_PixelFormat *
 PixelFormat12to20(SDL_PixelFormat *format20, SDL_Palette *palette20, const SDL12_PixelFormat *format12)
 {
@@ -2139,8 +2203,7 @@ AddVidModeToList(VideoModeList *vmode, SDL12_Rect *mode, const Uint16 maxw, cons
     }
     vmode->modeslist12 = (SDL12_Rect *) ptr;
 
-    vmode->modeslist12[vmode->nummodes] = *mode;
-
+    SDL20_memcpy(&vmode->modeslist12[vmode->nummodes], mode, sizeof(vmode->modeslist12[vmode->nummodes]));
     vmode->nummodes++;
 
     return 0;
@@ -2186,6 +2249,7 @@ Init12VidModes(void)
 {
     const int total = SDL20_GetNumDisplayModes(VideoDisplayIndex);
     const char *maxmodestr;
+    const unsigned max_bpp = SDL12Compat_GetHintInt("SDL12COMPAT_MAX_BPP", 32);
     VideoModeList *vmode = NULL;
     void *ptr = NULL;
     int i, j;
@@ -2236,6 +2300,11 @@ Init12VidModes(void)
 
         if (mode.w > 65535 || mode.h > 65535) {
             continue;  /* can't fit to 16-bits for SDL12_Rect */
+        }
+
+        if (SDL_BITSPERPIXEL(mode.format) > max_bpp) {
+            /* If we see any mode > max_bpp, reduce its bpp. */
+            mode.format = BPPToPixelFormat(max_bpp);
         }
 
         if (!vmode || (mode.format != vmode->format)) {  /* SDL20_GetDisplayMode() sorts on bpp first. We know when to change arrays. */
@@ -2349,6 +2418,7 @@ Init12Video(void)
 {
     const char *driver = SDL20_GetCurrentVideoDriver();
     const char *scale_method_env = SDL12Compat_GetHint("SDL12COMPAT_SCALE_METHOD");
+    const unsigned max_bpp = SDL12Compat_GetHintInt("SDL12COMPAT_MAX_BPP", 32);
     SDL_DisplayMode mode;
     int i;
 
@@ -2413,7 +2483,11 @@ Init12Video(void)
     SDL20_StopTextInput();
 
     if (SDL20_GetDesktopDisplayMode(VideoDisplayIndex, &mode) == 0) {
-        VideoInfoVfmt20 = SDL20_AllocFormat(mode.format);
+        if (SDL_BITSPERPIXEL(mode.format) > max_bpp) {
+            VideoInfoVfmt20 = SDL20_AllocFormat(BPPToPixelFormat(max_bpp));
+        } else {
+            VideoInfoVfmt20 = SDL20_AllocFormat(mode.format);
+        }
         VideoInfo12.vfmt = PixelFormat20to12(&VideoInfoVfmt12, &VideoInfoPalette12, VideoInfoVfmt20);
         VideoInfo12.current_w = mode.w;
         VideoInfo12.current_h = mode.h;
@@ -2595,6 +2669,19 @@ SDL_WasInit(Uint32 sdl12flags)
     return InitFlags20to12(SDL20_WasInit(sdl20flags)) | extraflags;
 }
 
+static void
+FreeSurfaceContents(SDL12_Surface *surface12)
+{
+    if (surface12->surface20) {
+        SDL20_FreeSurface(surface12->surface20);
+        surface12->surface20 = NULL;
+    }
+    if (surface12->format) {
+        SDL20_free(surface12->format->palette);
+        SDL20_free(surface12->format);
+        surface12->format = NULL;
+    }
+}
 
 static SDL12_Surface *EndVidModeCreate(void);
 static void
@@ -4680,7 +4767,7 @@ EventFilter20to12(void *data, SDL_Event *event20)
         }
 
         case SDL_MOUSEMOTION:
-            if (!VideoSurface12) {
+            if (!VideoSurface12 || !VideoSurface12->surface20) {
                 return 1;  /* we don't have a screen surface yet? Don't send this on to the app. */
             }
 
@@ -4916,26 +5003,21 @@ Rect12to20(const SDL12_Rect *rect12, SDL_Rect *rect20)
     return rect20;
 }
 
-static SDL12_Surface *
-Surface20to12(SDL_Surface *surface20)
+static SDL_bool
+Surface20to12InPlace(SDL_Surface *surface20,
+                     SDL12_Surface *surface12)
 {
     SDL_BlendMode blendmode = SDL_BLENDMODE_NONE;
-    SDL12_Surface *surface12 = NULL;
     SDL12_Palette *palette12 = NULL;
     SDL12_PixelFormat *format12 = NULL;
     Uint32 flags = 0;
 
     if (!surface20) {
-        return NULL;
+        return SDL_FALSE;
     }
     if (surface20->pitch > 65535) {
         SDL20_SetError("Pitch is too large");  /* can't fit to 16-bits */
-        return NULL;
-    }
-
-    surface12 = (SDL12_Surface *) SDL20_malloc(sizeof (SDL12_Surface));
-    if (!surface12) {
-        goto failed;
+        return SDL_FALSE;
     }
 
     if (surface20->format->palette) {
@@ -5008,12 +5090,33 @@ Surface20to12(SDL_Surface *surface20)
     Rect20to12(&surface20->clip_rect, &surface12->clip_rect);
     surface12->refcount = surface20->refcount;
 
+    return SDL_TRUE;
+
+failed:
+    SDL20_free(palette12);
+    SDL20_free(format12);
+    return SDL_FALSE;
+}
+
+static SDL12_Surface *
+Surface20to12(SDL_Surface *surface20)
+{
+    SDL12_Surface *surface12 = NULL;
+
+    surface12 = (SDL12_Surface *) SDL20_malloc(sizeof (SDL12_Surface));
+    if (!surface12) {
+        goto failed;
+    }
+
+    SDL20_zerop(surface12);
+    if (!Surface20to12InPlace(surface20, surface12)) {
+        goto failed;
+    }
+
     return surface12;
 
 failed:
     SDL20_free(surface12);
-    SDL20_free(palette12);
-    SDL20_free(format12);
     return NULL;
 }
 
@@ -5081,11 +5184,10 @@ SetPalette12ForMasks(SDL12_Surface *surface12, const Uint32 Rmask, const Uint32 
     }
 }
 
-DECLSPEC12 SDL12_Surface * SDLCALL
-SDL_CreateRGBSurface(Uint32 flags12, int width, int height, int depth, Uint32 Rmask, Uint32 Gmask, Uint32 Bmask, Uint32 Amask)
+static SDL_Surface *
+CreateRGBSurface(Uint32 flags12, int width, int height, int depth, Uint32 Rmask, Uint32 Gmask, Uint32 Bmask, Uint32 Amask)
 {
     SDL_Surface *surface20;
-    SDL12_Surface *surface12;
 
     /* SDL 1.2 checks this. */
     if ((width >= 16384) || (height >= 65536)) {
@@ -5131,6 +5233,30 @@ SDL_CreateRGBSurface(Uint32 flags12, int width, int height, int depth, Uint32 Rm
         surface20 = SDL20_CreateRGBSurface(0, width, height, depth, Rmask, Gmask, Bmask, Amask);
     }
 
+    return surface20;
+}
+
+static void
+Surface12SetMasks(SDL12_Surface *surface12, Uint32 Rmask, Uint32 Gmask, Uint32 Bmask, Uint32 Amask)
+{
+    SetPalette12ForMasks(surface12, Rmask, Gmask, Bmask);
+
+    if (Amask != 0) {
+        surface12->flags |= SDL12_SRCALPHA;
+        SDL20_SetSurfaceBlendMode(surface12->surface20, SDL_BLENDMODE_BLEND);
+    }
+}
+
+DECLSPEC12 SDL12_Surface * SDLCALL
+SDL_CreateRGBSurface(Uint32 flags12, int width, int height, int depth, Uint32 Rmask, Uint32 Gmask, Uint32 Bmask, Uint32 Amask)
+{
+    SDL12_Surface *surface12;
+    SDL_Surface *surface20;
+
+    surface20 = CreateRGBSurface(flags12, width, height, depth, Rmask, Gmask, Bmask, Amask);
+    if (!surface20) {
+        return NULL;
+    }
     surface12 = Surface20to12(surface20);
     if (!surface12) {
         SDL20_FreeSurface(surface20);
@@ -5138,14 +5264,7 @@ SDL_CreateRGBSurface(Uint32 flags12, int width, int height, int depth, Uint32 Rm
     }
 
     SDL_assert((surface12->flags & ~(SDL12_SRCCOLORKEY|SDL12_SRCALPHA)) == 0);  /* shouldn't have prealloc, rleaccel, or dontfree. */
-
-    SetPalette12ForMasks(surface12, Rmask, Gmask, Bmask);
-
-    if (Amask != 0) {
-        surface12->flags |= SDL12_SRCALPHA;
-        SDL20_SetSurfaceBlendMode(surface20, SDL_BLENDMODE_BLEND);
-    }
-
+    Surface12SetMasks(surface12, Rmask, Gmask, Bmask, Amask);
     return surface12;
 }
 
@@ -5174,6 +5293,8 @@ SDL_CreateRGBSurfaceFrom(void *pixels, int width, int height, int depth, int pit
 
     SDL_assert((surface12->flags & ~(SDL12_SRCCOLORKEY|SDL12_SRCALPHA)) == SDL12_PREALLOC);  /* should _only_ have prealloc. */
 
+    /* TODO: Is it correct that this always ignored Amask, or should it be
+     * using Surface12SetMasks which takes Amask into account? */
     SetPalette12ForMasks(surface12, Rmask, Gmask, Bmask);
 
     return surface12;
@@ -5186,11 +5307,7 @@ SDL_FreeSurface(SDL12_Surface *surface12)
         surface12->refcount--;
         if (surface12->refcount)
             return;
-        SDL20_FreeSurface(surface12->surface20);
-        if (surface12->format) {
-            SDL20_free(surface12->format->palette);
-            SDL20_free(surface12->format);
-        }
+        FreeSurfaceContents(surface12);
         SDL20_free(surface12);
     }
 }
@@ -5505,11 +5622,9 @@ EndVidModeCreate(void)
         VideoPhysicalPalette20 = NULL;
     }
     if (VideoSurface12) {
-        SDL12_Surface *screen12 = VideoSurface12;
         SDL20_free(VideoSurface12->pixels);
         VideoSurface12->pixels = NULL;
-        VideoSurface12 = NULL;  /* SDL_FreeSurface will ignore the screen surface, so NULL the global variable out. */
-        SDL_FreeSurface(screen12);
+        FreeSurfaceContents(VideoSurface12);
     }
     if (VideoConvertSurface20) {
         SDL20_FreeSurface(VideoConvertSurface20);
@@ -5543,16 +5658,27 @@ EndVidModeCreate(void)
     return NULL;
 }
 
-
-static SDL12_Surface *
-CreateSurface12WithFormat(const int w, const int h, const Uint32 fmt)
+/* Essentially the same as SDL_CreateRGBSurface, but in-place */
+static void
+CreateVideoSurface(const Uint32 fmt)
 {
     Uint32 rmask, gmask, bmask, amask;
     int bpp;
+    SDL_Surface *surface20;
+
     if (!SDL20_PixelFormatEnumToMasks(fmt, &bpp, &rmask, &gmask, &bmask, &amask)) {
-        return NULL;
+        return;
     }
-    return SDL_CreateRGBSurface(0, w, h, bpp, rmask, gmask, bmask, amask);
+
+    SDL20_zerop(VideoSurface12);
+    surface20 = CreateRGBSurface(0, 0, 0, bpp, rmask, gmask, bmask, amask);
+
+    if (!Surface20to12InPlace(surface20, VideoSurface12)) {
+        FreeSurfaceContents(VideoSurface12);
+        return;
+    }
+
+    Surface12SetMasks(VideoSurface12, rmask, gmask, bmask, amask);
 }
 
 static SDL_Surface *
@@ -5882,12 +6008,15 @@ SetVideoModeImpl(int width, int height, int bpp, Uint32 flags12)
     Uint32 appfmt;
     const char *vsync_env = SDL12Compat_GetHint("SDL12COMPAT_SYNC_TO_VBLANK");
     float window_size_scaling = SDL12Compat_GetHintFloat("SDL12COMPAT_WINDOW_SCALING", 1.0f);
+    int max_bpp = SDL12Compat_GetHintInt("SDL12COMPAT_MAX_BPP", 32);
     SDL_bool use_gl_scaling = SDL_FALSE;
     SDL_bool use_highdpi = SDL_TRUE;
     SDL_bool fix_bordless_fs_win = SDL_TRUE;
     int scaled_width = width;
     int scaled_height = height;
     const char *fromwin_env = NULL;
+
+    VideoSurface12 = &VideoSurface12Location;
 
     if (flags12 & SDL12_OPENGL) {
         /* For now we default GL scaling to ENABLED. If an app breaks or is linked directly
@@ -5955,34 +6084,25 @@ SetVideoModeImpl(int width, int height, int bpp, Uint32 flags12)
            formats, give them 16-bit and we'll convert later. Nothing in SDL 1.2 will
            handle > 32 bits, so clamp there, too. AND ALSO, most apps will handle 32-bits
            but not 24, so force around that...so basically, you can have 16 or 32 bit. */
-        bpp = (bpp <= 16) ? 16 : 32;
+        bpp = (bpp <= 16) ? 16 : max_bpp;
     }
 
     if ((bpp != 8) && (bpp != 16) && (bpp != 24) && (bpp != 32)) {
         if (flags12 & SDL12_ANYFORMAT) {
-            bpp = 32;
+            bpp = max_bpp;
         } else {
             SDL20_SetError("Unsupported bits-per-pixel");
             return NULL;
         }
     }
 
-    #if !SDL_VERSION_ATLEAST(2,0,14)
-    #define SDL_PIXELFORMAT_XRGB8888 SDL_PIXELFORMAT_RGB888
-    #endif
-    switch (bpp) {
-        case  8: appfmt = SDL_PIXELFORMAT_INDEX8; break;
-        case 16: appfmt = SDL_PIXELFORMAT_RGB565; break;
-        case 24: appfmt = SDL_PIXELFORMAT_BGR24; break;
-        case 32: appfmt = SDL_PIXELFORMAT_XRGB8888; break;
-        default: SDL20_SetError("Unsupported bits-per-pixel"); return NULL;
-    }
+    appfmt = BPPToPixelFormat(bpp);
 
-    SDL_assert((VideoSurface12 != NULL) == (VideoWindow20 != NULL));
+    SDL_assert((VideoSurface12->surface20 != NULL) == (VideoWindow20 != NULL));
 
-    if (VideoSurface12 && ((VideoSurface12->flags & SDL12_OPENGL) != (flags12 & SDL12_OPENGL))) {
+    if (VideoSurface12->surface20 && ((VideoSurface12->flags & SDL12_OPENGL) != (flags12 & SDL12_OPENGL))) {
         EndVidModeCreate();  /* rebuild the window if moving to/from a GL context */
-    } else if (VideoSurface12 && (VideoSurface12->surface20->format->format != appfmt)) {
+    } else if (VideoSurface12->surface20 && (VideoSurface12->surface20->format->format != appfmt)) {
         EndVidModeCreate();  /* rebuild the window if changing pixel format */
     } else if (VideoGLContext20) {
         /* SDL 1.2 (infuriatingly!) destroys the GL context on each resize in some cases, on various platforms. Try to match that. */
@@ -6124,11 +6244,11 @@ SetVideoModeImpl(int width, int height, int bpp, Uint32 flags12)
         SDL20_SetWindowResizable(VideoWindow20, (flags12 & SDL12_RESIZABLE) ? SDL_TRUE : SDL_FALSE);
     }
 
-    if (VideoSurface12) {
+    if (VideoSurface12->surface20) {
         SDL20_free(VideoSurface12->pixels);
     } else {
-        VideoSurface12 = CreateSurface12WithFormat(0, 0, appfmt);
-        if (!VideoSurface12) {
+        CreateVideoSurface(appfmt);
+        if (!VideoSurface12->surface20) {
             return EndVidModeCreate();
         }
     }
@@ -6649,7 +6769,7 @@ DECLSPEC12 SDL12_Surface * SDLCALL
 SDL_DisplayFormat(SDL12_Surface *surface12)
 {
     const Uint32 flags = surface12->flags & (SDL12_SRCCOLORKEY|SDL12_SRCALPHA|SDL12_RLEACCELOK);
-    if (!VideoSurface12) {
+    if (!VideoSurface12 || !VideoSurface12->surface20) {
         SDL20_SetError("No video mode has been set");
         return NULL;
     }
@@ -6665,7 +6785,7 @@ SDL_DisplayFormatAlpha(SDL12_Surface *surface12)
     SDL_PixelFormat *fmt20 = NULL;
     SDL12_PixelFormat fmt12;
 
-    if (!VideoSurface12) {
+    if (!VideoSurface12 || !VideoSurface12->surface20) {
         SDL20_SetError("No video mode has been set");
         return NULL;
     }
@@ -7219,12 +7339,6 @@ UpdateRelativeMouseMode(void)
         const SDL_bool enable = (VideoWindowGrabbed && VideoCursorHidden) ? SDL_TRUE : SDL_FALSE;
         if (MouseInputIsRelative != enable) {
             MouseInputIsRelative = enable;
-            if (MouseInputIsRelative) {
-                /* reset position, we'll have to track it ourselves in SDL_MOUSEMOTION events, since 1.2
-                 * would give you window coordinates, even in relative mode. */
-                SDL20_GetMouseState(&MousePosition.x, &MousePosition.y);
-                AdjustOpenGLLogicalScalingPoint(&MousePosition.x, &MousePosition.y);
-            }
             SDL20_SetRelativeMouseMode(MouseInputIsRelative);
         }
     }
@@ -7250,7 +7364,7 @@ static void
 HandleInputGrab(SDL12_GrabMode mode)
 {
     /* SDL 1.2 always grabbed input if the video mode was fullscreen. */
-    const SDL_bool isfullscreen = (VideoSurface12 && (VideoSurface12->flags & SDL12_FULLSCREEN)) ? SDL_TRUE : SDL_FALSE;
+    const SDL_bool isfullscreen = (VideoSurface12 && VideoSurface12->surface20 && (VideoSurface12->flags & SDL12_FULLSCREEN)) ? SDL_TRUE : SDL_FALSE;
     const SDL_bool wantgrab = (isfullscreen || (mode == SDL12_GRAB_ON)) ? SDL_TRUE : SDL_FALSE;
     if (VideoWindowGrabbed != wantgrab) {
         if (VideoWindow20) {
@@ -7593,7 +7707,7 @@ SDL_DisplayYUVOverlay(SDL12_Overlay *overlay12, SDL12_Rect *dstrect12)
 {
     QueuedOverlayItem *overlay;
     SDL12_YUVData *hwdata;
-    SDL_Renderer *renderer = NULL;
+    SDL_Renderer *renderer;
     const SDL_bool ThisIsSetVideoModeThread = (SDL20_ThreadID() == SetVideoModeThread) ? SDL_TRUE : SDL_FALSE;
 
     if (!overlay12) {
@@ -7602,7 +7716,7 @@ SDL_DisplayYUVOverlay(SDL12_Overlay *overlay12, SDL12_Rect *dstrect12)
     if (!dstrect12) {
         return SDL20_InvalidParamError("dstrect");
     }
-    if (!(renderer = LockVideoRenderer())) {
+    if ((renderer = LockVideoRenderer()) == NULL) {
         return SDL20_SetError("No software screen surface available");
     }
 
@@ -8465,6 +8579,10 @@ SDL_LoadWAV_RW(SDL12_RWops *rwops12, int freerwops12,
 
     *buf = NULL;
 
+    if (!rwops20) {
+        return NULL;
+    }
+
     /* SDL2's LoadWAV requires a seekable stream, but SDL 1.2 didn't,
        so if the stream appears unseekable, try to load it into a
        memory rwops that we _can_ seek in */
@@ -8764,7 +8882,7 @@ SDL_CDOpen(int drive)
             SDL20_snprintf(fullpath, alloclen, "%s%strack%c%c.mp3", CDRomPath, DIRSEP, c0, c1);
             rw = SDL20_RWFromFile(fullpath, "rb");
             /* if there isn't a track 1 specified, pretend it's a data track, which matches most games' needs. */
-            if (!rw && (c == 0)) {
+            if (!rw && (c == 1)) {
                 fake_data_track = SDL_TRUE;
             }
         }

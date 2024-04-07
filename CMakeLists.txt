@@ -2,9 +2,9 @@
 #        you can define SDL2_INCLUDE_DIR on the cmdline.  For example:
 #        cmake -DSDL2_INCLUDE_DIR=/opt/SDL2/include/SDL2 [other stuff]
 
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.0.0...3.5)
 project(sdl12_compat
-        VERSION 1.2.65
+        VERSION 1.2.69
         LANGUAGES C)
 
 option(SDL12TESTS "Enable to build SDL-1.2 test programs" ON)
@@ -16,7 +16,7 @@ if(STATICDEVEL AND NOT (CMAKE_SYSTEM_NAME MATCHES "Linux"))
 endif()
 
 list(APPEND CMAKE_MODULE_PATH
-    "${CMAKE_CURRENT_LIST_DIR}/cmake/modules"
+  "${CMAKE_CURRENT_LIST_DIR}/cmake/modules"
 )
 
 include(CheckCSourceCompiles)
@@ -33,7 +33,7 @@ if(APPLE)
   # Xcode project file uses 1.0.0, but it's more compatible to use the
   # higher version.
   set(DYLIB_COMPAT_VERSION 12.0.0 CACHE STRING "library compatibility version")
-  set(DYLIB_CURRENT_VERSION 12.65.0 CACHE STRING "library current version")
+  set(DYLIB_CURRENT_VERSION 12.69.0 CACHE STRING "library current version")
   include_directories("/opt/X11/include")  # hack.
   if(CMAKE_VERSION VERSION_LESS 3.9)
   else()
