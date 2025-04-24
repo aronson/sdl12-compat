@@ -41,6 +41,15 @@ real SDL-1.2 available to you. */
 #ifdef __linux__
 #include <endian.h>
 #define SDL_BYTEORDER  __BYTE_ORDER
+#elif defined(__sun) && defined(__SVR4)  /* Solaris */
+#include <sys/byteorder.h>
+#if defined(_LITTLE_ENDIAN)
+#define SDL_BYTEORDER   SDL_LIL_ENDIAN
+#elif defined(_BIG_ENDIAN)
+#define SDL_BYTEORDER   SDL_BIG_ENDIAN
+#else
+#error Unsupported endianness
+#endif
 #elif defined(__OpenBSD__) || defined(__DragonFly__)
 #include <endian.h>
 #define SDL_BYTEORDER  BYTE_ORDER
@@ -61,7 +70,7 @@ real SDL-1.2 available to you. */
     defined(__m68k__) || defined(mc68000) || defined(_M_M68K) || \
     (defined(__MIPS__) && defined(__MIPSEB__)) || \
     defined(__ppc__) || defined(__POWERPC__) || defined(__powerpc__) || defined(__PPC__) || \
-    defined(__sparc__)
+    defined(__sparc__) || defined(__sparc)
 #define SDL_BYTEORDER   SDL_BIG_ENDIAN
 #else
 #define SDL_BYTEORDER   SDL_LIL_ENDIAN
@@ -98,7 +107,7 @@ real SDL-1.2 available to you. */
 
 #if HAS_BUILTIN_BSWAP16
 #define SDL_Swap16(x) __builtin_bswap16(x)
-#elif defined(_MSC_VER) && (_MSC_VER >= 1400)
+#elif (defined(_MSC_VER) && (_MSC_VER >= 1400)) && !defined(__ICL)
 #pragma intrinsic(_byteswap_ushort)
 #define SDL_Swap16(x) _byteswap_ushort(x)
 #elif defined(__i386__) && !HAS_BROKEN_BSWAP
@@ -147,7 +156,7 @@ SDL_Swap16(Uint16 x)
 
 #if HAS_BUILTIN_BSWAP32
 #define SDL_Swap32(x) __builtin_bswap32(x)
-#elif defined(_MSC_VER) && (_MSC_VER >= 1400)
+#elif (defined(_MSC_VER) && (_MSC_VER >= 1400)) && !defined(__ICL)
 #pragma intrinsic(_byteswap_ulong)
 #define SDL_Swap32(x) _byteswap_ulong(x)
 #elif defined(__i386__) && !HAS_BROKEN_BSWAP
@@ -199,7 +208,7 @@ SDL_Swap32(Uint32 x)
 
 #if HAS_BUILTIN_BSWAP64
 #define SDL_Swap64(x) __builtin_bswap64(x)
-#elif defined(_MSC_VER) && (_MSC_VER >= 1400)
+#elif (defined(_MSC_VER) && (_MSC_VER >= 1400)) && !defined(__ICL)
 #pragma intrinsic(_byteswap_uint64)
 #define SDL_Swap64(x) _byteswap_uint64(x)
 #elif defined(__i386__) && !HAS_BROKEN_BSWAP

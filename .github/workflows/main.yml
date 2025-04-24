@@ -9,19 +9,22 @@ jobs:
     strategy:
       matrix:
         platform:
-        - { name: Windows, os: windows-latest }
-        - { name: Linux,   os: ubuntu-latest, flags: -GNinja }
-        - { name: MacOS,   os: macos-latest }
+        - { name: Windows-MSVC-x86, os: windows-latest, flags: -A Win32 }
+        - { name: Windows-MSVC-x64, os: windows-latest, flags: -A x64 }
+        - { name: Linux-x86_64, os: ubuntu-24.04, flags: -GNinja }
+        - { name: Linux-arm64, os: ubuntu-24.04-arm, flags: -GNinja }
+        - { name: MacOS-arm64, os: macos-latest }
+        - { name: MacOS-x86_64, os: macos-13 }
     steps:
     - name: Setup Linux dependencies
-      if: runner.os == 'Linux'
+      if: startsWith(runner.os, 'Linux')
       run: |
-        sudo apt-get update
-        sudo apt-get install cmake ninja-build libgl1-mesa-dev libglu1-mesa-dev
+        sudo apt update -q
+        sudo apt install -y cmake ninja-build libgl1-mesa-dev libglu1-mesa-dev
     - name: Get sdl12-compat sources
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
     - name: Get SDL2 headers
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         repository: libsdl-org/SDL
         ref: SDL2
@@ -29,5 +32,5 @@ jobs:
     - name: Configure CMake
       run: cmake -DSDL2_INCLUDE_DIR="${{ github.workspace }}/SDL2/include" -B build ${{ matrix.platform.flags }}
     - name: Build
-      run: cmake --build build/
+      run: cmake --build build/ --verbose
 

@@ -8,7 +8,7 @@ and 2D framebuffer across multiple platforms.
 
 This code is a compatibility layer; it provides a binary and source
 compatible API for programs written against SDL 1.2, but it uses SDL 2.0
-behind the scenes. If you are writing new code, please target SDL 2.0
+behind the scenes. If you are writing new code, please target SDL 3.0
 directly and do not use this layer.
 
 If you absolutely must have the real SDL 1.2 ("SDL 1.2 Classic"), please use
@@ -47,7 +47,7 @@ You'll need to use CMake to build sdl12-compat. Download at
 Please refer to the [CMake documentation](https://cmake.org/documentation/)
 for complete details, as platform and build tool details vary.
 
-You'll need a copy of SDL 2.0.x to build sdl12-compat, because we need the
+You'll need a copy of SDL2 to build sdl12-compat, because we need the
 SDL2 headers. You can build this from source or install from a package
 manager. Windows and Mac users can download prebuilt binaries from
 [SDL's download page](https://libsdl.org/download-2.0.php); make sure you

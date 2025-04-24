@@ -2,7 +2,7 @@
 #        you can define SDL2_INCLUDE_DIR on the cmdline.  For example:
 #        cmake -DSDL2_INCLUDE_DIR=/opt/SDL2/include/SDL2 [other stuff]
 
-cmake_minimum_required(VERSION 3.0.0...3.5)
+cmake_minimum_required(VERSION 3.0.0...4.0)
 project(sdl12_compat
         VERSION 1.2.69
         LANGUAGES C)
@@ -29,6 +29,10 @@ set(CMAKE_SKIP_RPATH TRUE)
 if(APPLE)
   set(OSX_SRCS "src/SDL12_compat_objc.m")
   set_source_files_properties(${OSX_SRCS} PROPERTIES LANGUAGE C)
+  if(NOT CMAKE_VERSION VERSION_LESS "3.16")
+      enable_language(OBJC)
+      set_source_files_properties(${OSX_SRCS} PROPERTIES LANGUAGE OBJC)
+  endif()
   # compatibility version set to match SDL-1.2 autotools build
   # Xcode project file uses 1.0.0, but it's more compatible to use the
   # higher version.
@@ -145,6 +149,9 @@ endif()
 if(APPLE)
     add_library(SDLmain STATIC src/SDLmain/macosx/SDLMain.m)
     set_source_files_properties(src/SDLmain/macosx/SDLMain.m PROPERTIES LANGUAGE C)
+    if(NOT CMAKE_VERSION VERSION_LESS "3.16")
+        set_source_files_properties("src/SDLmain/macosx/SDLMain.m" PROPERTIES LANGUAGE OBJC)
+    endif()
 elseif(WIN32)
     add_library(SDLmain STATIC src/SDLmain/win32/SDL_win32_main.c)
     set_target_properties(SDLmain PROPERTIES COMPILE_DEFINITIONS "_CRT_SECURE_NO_WARNINGS;_CRT_SECURE_NO_DEPRECATE;_CRT_NONSTDC_NO_DEPRECATE")  # !!! FIXME: don't use C runtime? We fixed this in SDL2.
@@ -233,7 +240,7 @@ if(SDL12TESTS)
     endif()
 
     foreach(fname "icon.bmp" "moose.dat" "picture.xbm" "sail.bmp" "sample.bmp" "sample.wav" "utf8.txt")
-        file(COPY "${CMAKE_SOURCE_DIR}/test/${fname}" DESTINATION "${CMAKE_BINARY_DIR}")
+        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/test/${fname}" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
     endforeach(fname)
 endif()
 
@@ -282,12 +289,12 @@ if(SDL12DEVEL)
     set(ENABLE_SHARED_FALSE "#")
 
     configure_file(sdl12_compat.pc.in sdl12_compat.pc @ONLY)
-    install(FILES ${CMAKE_BINARY_DIR}/sdl12_compat.pc
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/sdl12_compat.pc
       DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
     )
 
-    configure_file("${CMAKE_SOURCE_DIR}/sdl-config.in" "${CMAKE_BINARY_DIR}/sdl-config" @ONLY)
-    install(PROGRAMS "${CMAKE_BINARY_DIR}/sdl-config" DESTINATION bin)
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/sdl-config.in" "${CMAKE_CURRENT_BINARY_DIR}/sdl-config" @ONLY)
+    install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/sdl-config" DESTINATION bin)
   endif()
 
   set(SOEXT ${CMAKE_SHARED_LIBRARY_SUFFIX})
@@ -296,11 +303,11 @@ if(SDL12DEVEL)
     install(CODE "
       execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink
         \"lib${SONAME}${SOPOSTFIX}${SOEXT}\" \"libSDL${SOPOSTFIX}${SOEXT}\"
-        WORKING_DIRECTORY \"${CMAKE_BINARY_DIR}\")")
-    install(FILES ${CMAKE_BINARY_DIR}/libSDL${SOPOSTFIX}${SOEXT} DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+        WORKING_DIRECTORY \"${CMAKE_CURRENT_BINARY_DIR}\")")
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/libSDL${SOPOSTFIX}${SOEXT} DESTINATION "${CMAKE_INSTALL_LIBDIR}")
   endif()
 
-  install(FILES "${CMAKE_SOURCE_DIR}/sdl.m4" DESTINATION "${CMAKE_INSTALL_FULL_DATAROOTDIR}/aclocal")
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/sdl.m4" DESTINATION "${CMAKE_INSTALL_FULL_DATAROOTDIR}/aclocal")
 endif()
 
 if(STATICDEVEL AND SDL12DEVEL)
